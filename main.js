@@ -1,25 +1,133 @@
 import * as THREE from 'three';
 import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm';
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 
-let scene, renderer, camera, world, player1Body, player2Body, discBody;
+let scene, renderer, camera, world, player1, player2, disc, controls;
 let meshes = [];
 let bodies = [];
 
-const deltaFromHorizontalBorder = 300;
-const deltaFromVerticalBorder = 50
 
 const northWallPosY =  (window.innerHeight/2) - deltaFromVerticalBorder;
 const eastWallPosX = (window.innerWidth/2) - deltaFromHorizontalBorder;
 const southWallPosY = (-window.innerHeight/2) + deltaFromVerticalBorder;
 const westWallPosX = (-window.innerWidth/2) + deltaFromHorizontalBorder;
 
-const playerLength = 150;
-const playerWidth = 10;
+class Disc {
+    height = 20;
+    radius = 30;
+    bodyMaterial = new CANNON.Material();
+    geometry = new THREE.CylinderGeometry(this.radius, this.radius, this.height);
+    material = new THREE.MeshBasicMaterial({color: 0x00ff00});
+    mesh;
+    body;
 
-const discRadius = 30;
+    constructor() {
+        this.mesh = new THREE.Mesh( this.geometry, this.material );
 
+        this.body = new CANNON.Body({
+            mass: 2,
+            material: this.bodyMaterial,
+            shape: new CANNON.Cylinder(this.radius, this.radius, this.height),
+            position: new CANNON.Vec3(0, 0, 0)
+        });
+        this.body.angularDamping = 1;
+        this.body.quaternion.setFromEuler(Math.PI/2, 0, 0);
+        this.body.linearDamping = 0.0001;
+    }
+}
+
+class Player {
+    length = 150;
+    width = 20;
+    geometry = new THREE.BoxGeometry(this.width, this.length, 20);
+    static bodyMaterial = new CANNON.Material();
+    material;
+    mesh;
+    body;
+}
+
+class Player1 extends Player{
+    constructor() {
+        super();
+
+        //three
+        this.material = new THREE.MeshBasicMaterial({color: 0xff0000});
+        this.mesh = new THREE.Mesh( this.geometry, this.material );
+
+        //cannon
+        this.body = new CANNON.Body({
+            mass: 5,
+            material: Player.bodyMaterial,
+            shape: new CANNON.Box(new CANNON.Vec3(this.width/2, this.length/2, 20/2)),
+            position: new CANNON.Vec3(westWallPosX + 200, 0, 0),
+            type: CANNON.Body.KINEMATIC
+        });
+    }
+}
+
+class Player2 extends Player {
+    constructor() {
+        super();
+
+        //three
+        this.material = new THREE.MeshBasicMaterial({color: 0x0000ff});
+        this.mesh = new THREE.Mesh( this.geometry, this.material );
+
+        //cannon
+        this.body = new CANNON.Body({
+            mass: 5,
+            material: Player.bodyMaterial,
+            shape: new CANNON.Box(new CANNON.Vec3(this.width/2, this.length/2, 20/2)),
+            position: new CANNON.Vec3(eastWallPosX - 200, 0, 0),
+            type: CANNON.Body.KINEMATIC
+        });
+    }
+}
+
+class Wall {
+    material = new THREE.MeshBasicMaterial({color: 0x111100});
+    deltaFromHorizontalBorder = 300;
+    deltaFromVerticalBorder = 50;
+    width;
+    height;
+    depth;
+    geometry;
+    static bodyMaterial;
+    mesh;
+    body;
+}
+
+class HorizontalWall extends Wall{
+    constructor() {
+        super();
+
+        this.width = window.innerWidth-2*this.deltaFromHorizontalBorder;
+        this.height = 10;
+        this.depth = 200;
+
+        this.geometry = new THREE.BoxGeometry(this.width, this.height, this.depth);
+        this.mesh = new THREE.Mesh( this.geometry, this.material );
+
+        this.body = new CANNON.Body({
+            mass: 0
+        })
+    }
+
+}
+
+class VerticalWall extends Wall{
+    constructor() {
+        super();
+    }
+}
+
+
+player1 = new Player1();
+player2 = new Player2();
+disc = new Disc();
 initThree();
 initCannon();
+
 animate();
 
 function update() {
@@ -37,7 +145,7 @@ function screenYToCartesian(y) {
     return (window.innerHeight/2)-y;
 }
 
-function distanceFromPoint(x1, y1, x2, y2) {
+function distanceFromPoint2D(x1, y1, x2, y2) {
     return Math.sqrt((x1-x2)**2 + (y1-y2)**2);
 }
 
@@ -47,12 +155,21 @@ function initThree() {
     scene.background = new THREE.Color( 0xa0a0a0 );
 
 
+    scene.add(player1.mesh);
+    scene.add(player2.mesh);
+    scene.add(disc.mesh);
+
+    meshes.push(player1.mesh);
+    meshes.push(player2.mesh);
+    meshes.push(disc.mesh);
+
+
     //telecamera
     camera = new THREE.OrthographicCamera(-window.innerWidth/2, window.innerWidth/2, window.innerHeight/2, -window.innerHeight/2);
-    camera.position.set(0, 0, 100);
+    camera.position.set(0, 0, 2000);
     camera.lookAt(0, 0, 0);
     camera.near = 0;
-    camera.far = 200;
+    camera.far = 4000;
 
 
     //renderizzatore
@@ -73,9 +190,8 @@ function initThree() {
 
 
     //limiti campo di gioco
-    const horizontalWallGeometry = new THREE.BoxGeometry(window.innerWidth-2*deltaFromHorizontalBorder, 10, 20);
-    const verticalWallGeometry = new THREE.BoxGeometry(10, window.innerHeight-2*deltaFromVerticalBorder, 20);
-    const wallMaterial = new THREE.MeshBasicMaterial({color: 0x111100});
+    const verticalWallGeometry = new THREE.BoxGeometry(10, window.innerHeight-2*deltaFromVerticalBorder, 200);
+
 
 
     const northWall = new THREE.Mesh( horizontalWallGeometry, wallMaterial );
@@ -95,26 +211,7 @@ function initThree() {
     meshes.push(westWall);
 
 
-    //GIOCATORI
-    const playerGeometry = new THREE.BoxGeometry(playerWidth, playerLength, 20);
-
-    const player1Material = new THREE.MeshBasicMaterial({color: 0xff0000});
-    const player1 = new THREE.Mesh( playerGeometry, player1Material );
-    scene.add(player1);
-    meshes.push(player1);
-
-    const player2Material = new THREE.MeshBasicMaterial({color: 0x0000ff});
-    const player2 = new THREE.Mesh( playerGeometry, player2Material );
-    scene.add(player2);
-    meshes.push(player2);
-
-
-    //DISCO
-    const discGeometry = new THREE.SphereGeometry(discRadius);
-    const discMaterial = new THREE.MeshBasicMaterial({color: 0x00ff00});
-    const disc = new THREE.Mesh( discGeometry, discMaterial );
-    scene.add(disc);
-    meshes.push(disc);
+    controls = new OrbitControls( camera, renderer.domElement );
 
 
     window.onresize = update;
@@ -124,15 +221,29 @@ function initCannon() {
     world = new CANNON.World({
         gravity: new CANNON.Vec3(0, 0, 0)
     });
+    let solver = new CANNON.GSSolver();
+    solver = new CANNON.SplitSolver(solver);
+    solver.iterations = 50;
+    solver.tolerance = 0.00001;
+    solver.k = 1000000;
+    solver.d = 50;
+
+    world.solver = solver;
+
+    world.addBody(player1.body);
+    world.addBody(player2.body);
+    world.addBody(disc.body);
+
+    bodies.push(player1.body);
+    bodies.push(player2.body);
+    bodies.push(disc.body);
 
     const wallMaterial = new CANNON.Material();
-    const playerMaterial = new CANNON.Material();
-    const discMaterial = new CANNON.Material();
 
     const northWallBody = new CANNON.Body({
         mass: 0,
         material: wallMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(window.innerWidth-2*deltaFromHorizontalBorder/2, 10/2, 20/2)),
+        shape: new CANNON.Box(new CANNON.Vec3(window.innerWidth-2*deltaFromHorizontalBorder/2, 10/2, 200/2)),
         position: new CANNON.Vec3(0, northWallPosY, 0),
         type: CANNON.Body.STATIC
     });
@@ -142,7 +253,7 @@ function initCannon() {
     const eastWallBody = new CANNON.Body({
         mass: 0,
         material: wallMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(10/2, window.innerHeight-2*deltaFromVerticalBorder/2, 20/2)),
+        shape: new CANNON.Box(new CANNON.Vec3(10/2, window.innerHeight-2*deltaFromVerticalBorder/2, 200/2)),
         position: new CANNON.Vec3(eastWallPosX, 0, 0),
         type: CANNON.Body.STATIC
     });
@@ -152,7 +263,7 @@ function initCannon() {
     const southWallBody = new CANNON.Body({
         mass: 0,
         material: wallMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(window.innerWidth-2*deltaFromHorizontalBorder/2, 10/2, 20/2)),
+        shape: new CANNON.Box(new CANNON.Vec3(window.innerWidth-2*deltaFromHorizontalBorder/2, 10/2, 200/2)),
         position: new CANNON.Vec3(0, southWallPosY, 0),
         type: CANNON.Body.STATIC
     });
@@ -162,7 +273,7 @@ function initCannon() {
     const westWallBody = new CANNON.Body({
         mass: 0,
         material: wallMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(10/2, window.innerHeight-2*deltaFromVerticalBorder/2, 20/2)),
+        shape: new CANNON.Box(new CANNON.Vec3(10/2, window.innerHeight-2*deltaFromVerticalBorder/2, 200/2)),
         position: new CANNON.Vec3(westWallPosX, 0, 0),
         type: CANNON.Body.STATIC
     });
@@ -170,99 +281,76 @@ function initCannon() {
     bodies.push(westWallBody);
 
 
-
-    //GIOCATORI
-    player1Body = new CANNON.Body({
-        mass: 5,
-        material: playerMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(playerWidth/2, playerLength/2, 20/2)),
-        position: new CANNON.Vec3(westWallPosX + 200, 0, 0),
-        type: CANNON.Body.KINEMATIC
-    })
-    world.addBody(player1Body);
-    bodies.push(player1Body);
-
-    //GIOCATORI
-    player2Body = new CANNON.Body({
-        mass: 5,
-        material: playerMaterial,
-        shape: new CANNON.Box(new CANNON.Vec3(playerWidth/2, playerLength/2, 20/2)),
-        position: new CANNON.Vec3(eastWallPosX - 200, 0, 0),
-        type: CANNON.Body.KINEMATIC
-    })
-    world.addBody(player2Body);
-    bodies.push(player2Body);
-
-    discBody = new CANNON.Body({
-        mass: 2,
-        material: discMaterial,
-        shape: new CANNON.Sphere(discRadius),
-        position: new CANNON.Vec3(0, 0, 0)
-    })
-    world.addBody(discBody);
-    bodies.push(discBody);
-
     //proprietà del contatto tra oggetti diversi:
-    const wall_disc = new CANNON.ContactMaterial(wallMaterial, discMaterial, {
+    const wall_disc = new CANNON.ContactMaterial(wallMaterial, disc.material, {
         friction: 0,
-        restitution: 0.9
+        restitution: 1
     });
 
-    const player_disc = new CANNON.ContactMaterial(playerMaterial, discMaterial, {
-        friction: 0.2,
-        restitution: 0
+    const player1_disc = new CANNON.ContactMaterial(Player.bodyMaterial, disc.material, {
+        friction: 0,
+        restitution: 1
     });
 
     world.addContactMaterial(wall_disc);
-    world.addContactMaterial(player_disc);
+    world.addContactMaterial(player1_disc);
 
 
     //fa si che i giocatori puntino sempre verso il disco
-    /*
-    const player1ToDisc = new CANNON.ConeTwistConstraint(player1Body, discBody, {
-        pivotA: new CANNON.Vec3(0, 0, 0),
-        pivotB: new CANNON.Vec3(0, 0, 0),
-        axisA: new CANNON.Vec3(1, 0, 0),
-        axisB: new CANNON.Vec3(0, 0, 0),
-        upA: new CANNON.Vec3(0, 1, 0),
-        upB: new CANNON.Vec3(0, 0, 0),
-        angle: Math.PI/2
-    });
-    world.addConstraint(player1ToDisc);
 
-     */
 }
 
-renderer.domElement.addEventListener("mousemove", function(event) {
+
+renderer.domElement.onmousemove = function(event) {
     let x = screenXToCartesian( event.x );
     let y = screenYToCartesian( event.y );
 
+                                                                                                    //player1.body.position.x += event.movementX;
+                                                                                                    //player1.body.position.y -= event.movementY;
+
     //controllo dei bordi
-    if (x < 0 && x > westWallPosX + playerWidth/2) player1Body.position.x = x;
+    if (x < 0 && x > westWallPosX + player1.width/2 + disc.radius) player1.body.position.x = x;
     else {
-        if (x > 0) player1Body.position.x = 0;
-        if (x < westWallPosX + playerWidth/2) player1Body.position.x = westWallPosX + playerWidth/2;
+        if (x > 0) player1.body.position.x = 0;
+        if (x < westWallPosX + player1.width/2) player1.body.position.x = westWallPosX + player1.width + disc.radius;
     }
 
-    if (y < northWallPosY - playerLength/2 && y > southWallPosY + playerLength/2) player1Body.position.y = y;
+    if (y < northWallPosY - player1.length/2 - 2*disc.radius && y > southWallPosY + player1.length/2 + disc.radius) player1.body.position.y = y;
     else {
-        if (y > northWallPosY - playerLength/2) player1Body.position.y = northWallPosY - playerLength/2;
-        if (y < southWallPosY + playerLength/2) player1Body.position.y = southWallPosY + playerLength/2
+        if (y > northWallPosY - player1.length/2) player1.body.position.y = northWallPosY - player1.length/2 - disc.radius;
+        if (y < southWallPosY + player1.length/2) player1.body.position.y = southWallPosY + player1.length/2 + disc.radius;
     }
-})
+}
+
+function rotatePlayer(player = new Player()) {
+    let dist = distanceFromPoint2D(player.body.position.x, player.body.position.y, disc.body.position.x, disc.body.position.y)
+
+    let direction = new CANNON.Vec3();
+    player.body.position.vsub(disc.body.position, direction);
+
+    direction.normalize();
+
+    let angle = Math.atan2(direction.y, direction.x);
+    player.body.quaternion.setFromEuler(0, 0, angle);
+}
 
 //loop
 function animate() {
     requestAnimationFrame( animate );
 
-
-
+    //scrive posizione e rotazione degi corpi di cannon.js sulle mesh di three.js
     for (let i = 0; i !== bodies.length; i++) {
         meshes[i].position.copy(bodies[i].position);
         meshes[i].quaternion.copy(bodies[i].quaternion);
     }
 
-    world.fixedStep();
+    rotatePlayer(player1);
+    console.log(disc.body.position.z)
+    disc.body.position.z = 0;
+
+    world.fixedStep(1/700);
+
+    controls.update();
 
     renderer.render( scene, camera );
 }
