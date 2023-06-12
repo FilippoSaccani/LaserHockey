@@ -341,7 +341,7 @@ class Text {
     static loadFont() {
         const fontLoader = new FontLoader();
 
-        fontLoader.load("/node_modules/three/examples/fonts/helvetiker_bold.typeface.json", function ( response ){
+        fontLoader.load("node_modules/three/examples/fonts/helvetiker_bold.typeface.json", function ( response ){
             Text.font = response;
         })
     }
