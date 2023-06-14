@@ -2,14 +2,14 @@ import * as THREE from 'three';
 import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm';
 import {FontLoader} from 'three/addons/loaders/FontLoader.js';
 import {TextGeometry} from 'three/addons/geometries/TextGeometry.js';
+import Stats from 'https://unpkg.com/three@0.122.0/examples/jsm/libs/stats.module.js'
 
-let scene, renderer, camera, world;
-let mouseX = 0;
-let mouseY = 0;
+let scene, renderer, camera, world, stats;
+let mouseDeltaX = 0;
+let mouseDeltaY = 0;
 
 let meshes = [];
 let bodies = [];
-
 
 class Disc {
     height = 19;
@@ -19,7 +19,9 @@ class Disc {
     material = new THREE.MeshStandardMaterial({color: 0xffff00});
     mesh;
     body;
-    maxVel = 700;
+    maxVel = 800;
+    #resetCounter = 0;
+    #resetting = false;
 
     constructor() {
         this.mesh = new THREE.Mesh( this.geometry, this.material );
@@ -34,25 +36,56 @@ class Disc {
         });
         this.body.angularDamping = 1;
         this.body.quaternion.setFromEuler(Math.PI/2, 0, 0);
-        this.body.linearDamping = 0;
+        this.body.linearDamping = 0.2;
         this.body.linearFactor = new CANNON.Vec3(1, 1, 0);
     }
 
     outOfBounds(){
         let t = this;
 
-        if (this.body.position.x < -window.innerWidth/2 || this.body.position.x > window.innerWidth/2 || this.body.position.y < -window.innerHeight/2 || this.body.position.y > window.innerHeight/2) {
+        if (!this.resetting && (this.body.position.x < -window.innerWidth/2 || this.body.position.x > window.innerWidth/2 || this.body.position.y < -window.innerHeight/2 || this.body.position.y > window.innerHeight/2)) {
+            this.resetting = true;
             setTimeout(function(){
+                t.resetting = false;
                 t.reset();
             }, 1000);
             return true;
         }
+
+        if (Math.abs(this.body.velocity.x) < 1 && Math.abs(this.body.velocity.y) < 1) {
+            this.resetCounter++;
+            if (this.resetCounter === 200) t.reset();
+            return true;
+        }
+        this.resetCounter = 0;
+
         return false;
     }
 
     reset(){
         this.body.position.set(0, 0, 0);
         this.body.velocity.set(0, 0, 0);
+    }
+
+    trajectoryToTrigger1(){
+        let ray = this.trajectoryRay(window.innerWidth);
+
+        let result = new CANNON.RaycastResult();
+
+        ray.intersectBody(trigger1.body, result);
+
+        if (result.hasHit) {
+            let m, q;
+
+            //coefficiente angolare di una retta passante per due punti
+            m = Math.atan2(ray.direction.y, ray.direction.x);
+
+            q = this.body.position.y - this.body.position.x*m;
+
+            //restituisce i parametri della retta della traiettoria
+            return new THREE.Vector2(m, q);
+        }
+        return null;
     }
 
     trajectoryToTrigger2(){
@@ -77,8 +110,8 @@ class Disc {
     }
 
     maxVelocity() {
-        if (this.body.velocity.x > this.maxVel) this.body.velocity.x = this.maxVel * Math.sign(this.body.velocity.x);
-        if (this.body.velocity.y > this.maxVel) this.body.velocity.y = this.maxVel * Math.sign(this.body.velocity.y);
+        if (Math.abs(this.body.velocity.x) > this.maxVel) this.body.velocity.x = this.maxVel * Math.sign(this.body.velocity.x);
+        if (Math.abs(this.body.velocity.y) > this.maxVel) this.body.velocity.y = this.maxVel * Math.sign(this.body.velocity.y);
     }
 
     trajectoryRay(length){
@@ -110,8 +143,10 @@ class Player {
 }
 
 class Player1 extends Player{
-    speed = 7;
-
+    defendSpeed = 50;
+    attackSpeed = 20;
+    returnSpeed = 50;
+    returning = 0;
     constructor() {
         super();
         this.basePositionX = Wall.westWallPosX + 200;
@@ -124,7 +159,7 @@ class Player1 extends Player{
 
         //cannon
         this.body = new CANNON.Body({
-            mass: 5,
+            mass: 100,
             material: Player.bodyMaterial,
             shape: new CANNON.Cylinder(this.radius, this.radius, this.depth),
             position: new CANNON.Vec3(this.basePositionX, 0, 0),
@@ -134,9 +169,13 @@ class Player1 extends Player{
         this.body.quaternion.setFromEuler(Math.PI/2, 0, 0);
     }
 
+    /*
     move(){
-        this.body.position.x += (mouseX - this.body.position.x)/this.speed;
-        this.body.position.y += (mouseY - this.body.position.y)/this.speed;
+        this.body.position.x += mouseDeltaX/2;
+        this.body.position.y += -mouseDeltaY/2;
+
+        mouseDeltaX = 0;
+        mouseDeltaY = 0;
 
         this.limits();
     }
@@ -144,17 +183,77 @@ class Player1 extends Player{
     limits(){
         //controllo dei bordi
         if (this.body.position.x >= -this.radius) this.body.position.x = -this.radius;
-        if (this.body.position.x <= Wall.westWallPosX + this.radius + 5) this.body.position.x = Wall.westWallPosX + this.radius + 5;
+        if (this.body.position.x <= Wall.westWallPosX + this.radius + 5 + disc.radius/2) this.body.position.x = Wall.westWallPosX + this.radius + 5 + disc.radius/2;
 
-        if (this.body.position.y >= Wall.northWallPosY - this.radius - 5) this.body.position.y = Wall.northWallPosY - this.radius - 5;
-        if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5) this.body.position.y = Wall.southWallPosY + this.radius + 5;
+        if (this.body.position.y >= Wall.northWallPosY - this.radius - 5 - disc.radius/2) this.body.position.y = Wall.northWallPosY - this.radius - 5 - disc.radius/2;
+        if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5 + disc.radius/2) this.body.position.y = Wall.southWallPosY + this.radius + 5 + disc.radius/2;
     }
+     */
+
+    /*
+    limits(){
+        let angleLimit = 1.06;
+    }
+
+    move(){
+        let trajectory = disc.trajectoryToTrigger1();
+
+        //difesa
+        if (trajectory && disc.body.velocity.x < - 400) this.defend(trajectory);
+        else {
+            //limita i loop di attacco/ritorno negli angoli
+            if (this.returning > 20) this.returning = 0;
+
+            //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore due allora non attacca,
+            // ma torna verso la sua posizione iniziale
+            if (disc.body.position.x > 0 || disc.body.velocity.x > 300 || this.returning > 0) this.return();
+
+            //altrimenti attacca
+            else this.attack();
+        }
+
+        this.limits();
+    }
+
+    defend(trajectory){
+        let intersectionX, intersectionY;
+
+        //punto della linea più vicino al giocatore
+        if (trajectory.x === 0) {
+            intersectionX = this.body.position.x;
+            intersectionY = trajectory.y;
+        }
+        else {
+            let m2 = -1/trajectory.x;
+            let q2 = this.body.position.y - this.body.position.x*m2;
+
+            intersectionX = (q2 - trajectory.y)/(trajectory.x - m2);
+            intersectionY = m2 * intersectionX + q2;
+        }
+
+        this.body.position.x += (intersectionX - this.body.position.x)/this.defendSpeed - 10;
+        this.body.position.y += (intersectionY - this.body.position.y)/this.defendSpeed;
+    }
+
+    attack(){
+        this.body.position.x += (disc.body.position.x - this.body.position.x - disc.radius)/(this.attackSpeed);
+        this.body.position.y += (disc.body.position.y - this.body.position.y - disc.radius)/(this.attackSpeed);
+    }
+
+    return(){
+        this.returning++;
+        this.body.position.x += (this.basePositionX - this.body.position.x)/this.returnSpeed;
+        this.body.position.y += (-this.body.position.y)/this.returnSpeed;
+    }
+
+     */
 }
 
 class Player2 extends Player {
-    defendSpeed = 20;
+    defendSpeed = 50;
     attackSpeed = 20;
-    returnSpeed = 40;
+    returnSpeed = 50;
+    returning = 0;
 
     constructor() {
         super();
@@ -183,9 +282,12 @@ class Player2 extends Player {
         //difesa
         if (trajectory && disc.body.velocity.x > 400) this.defend(trajectory);
         else {
+            //limita i loop di attacco/ritorno negli angoli
+            if (this.returning > 20) this.returning = 0;
+
             //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore uno allora non attacca,
             // ma torna verso la sua posizione iniziale
-            if (disc.body.position.x <= 0 || disc.outOfBounds() || disc.body.velocity.x < - 400) this.return();
+            if (disc.body.position.x < 0 || disc.body.velocity.x < - 300 || this.returning > 0) this.return();
 
             //altrimenti attacca
             else this.attack();
@@ -195,12 +297,14 @@ class Player2 extends Player {
     }
 
      limits(){
+        let angleLimit = 1.06;
+
         //controllo bordi
-        if (this.body.position.x > Wall.eastWallPosX - this.radius - disc.radius/1.5 - 5) this.body.position.x = Wall.eastWallPosX - this.radius - disc.radius/1.5 - 5;
+        if (this.body.position.x > Wall.eastWallPosX - this.radius - disc.radius*angleLimit - 5) this.body.position.x = Wall.eastWallPosX - this.radius - disc.radius*angleLimit - 5;
         else if (this.body.position.x < this.radius) this.body.position.x = this.radius;
 
-        if (this.body.position.y > Wall.northWallPosY - this.radius - disc.radius/1.5 - 5) this.body.position.y = Wall.northWallPosY - this.radius - disc.radius/1.5 - 5;
-        else if (this.body.position.y < Wall.southWallPosY + this.radius + disc.radius/1.5 + 5) this.body.position.y = Wall.southWallPosY + this.radius + disc.radius/1.5 + 5;
+        if (this.body.position.y > Wall.northWallPosY - this.radius - disc.radius*angleLimit - 5) this.body.position.y = Wall.northWallPosY - this.radius - disc.radius*angleLimit - 5;
+        else if (this.body.position.y < Wall.southWallPosY + this.radius + disc.radius*angleLimit + 5) this.body.position.y = Wall.southWallPosY + this.radius + disc.radius*angleLimit + 5;
     }
 
     defend(trajectory){
@@ -224,19 +328,12 @@ class Player2 extends Player {
     }
 
     attack(){
-        let distanceFromTopAngle = disc.body.position.distanceTo(new CANNON.Vec3(window.innerWidth/2-Wall.deltaFromVerticalBorder, window.innerHeight/2-Wall.deltaFromHorizontalBorder, 0));
-        let distanceFromBottomAngle = disc.body.position.distanceTo(new CANNON.Vec3(window.innerWidth/2-Wall.deltaFromVerticalBorder, -(window.innerHeight/2-Wall.deltaFromHorizontalBorder), 0));
-
-        let angleMod = 1;
-        if (distanceFromTopAngle < 250) angleMod = 0.1*distanceFromTopAngle
-        else if (distanceFromBottomAngle < 250) angleMod = 0.1*distanceFromBottomAngle;
-        else angleMod = 1;
-
-        this.body.position.x += (disc.body.position.x - this.body.position.x - disc.radius)/(this.attackSpeed*angleMod);
-        this.body.position.y += (disc.body.position.y - this.body.position.y - disc.radius)/(this.attackSpeed*angleMod);
+        this.body.position.x += (disc.body.position.x - this.body.position.x - disc.radius)/(this.attackSpeed);
+        this.body.position.y += (disc.body.position.y - this.body.position.y - disc.radius)/(this.attackSpeed);
     }
 
     return(){
+        this.returning++;
         this.body.position.x += (this.basePositionX - this.body.position.x)/this.returnSpeed;
         this.body.position.y += (-this.body.position.y)/this.returnSpeed;
     }
@@ -312,14 +409,15 @@ class Trigger {
         else x = wall.body.position.x + 60;
 
         this.body = new CANNON.Body({
+            type: CANNON.Body.STATIC,
             isTrigger: true,
-            shape: new CANNON.Box(new CANNON.Vec3(wall.width/2, (wall.height+this.deltaFromWall)/2, wall.depth/2)),
+            shape: new CANNON.Box(new CANNON.Vec3(4*wall.width/2, (wall.height+this.deltaFromWall)/2, wall.depth/2)),
             position: new CANNON.Vec3(x, 0, 0),
-            collisionResponse: false
+            collisionResponse: true
         });
 
         this.mesh = new THREE.Mesh(
-            new THREE.BoxGeometry(wall.width, wall.height+this.deltaFromWall, wall.depth),
+            new THREE.BoxGeometry(4*wall.width, wall.height+this.deltaFromWall, wall.depth),
             new THREE.MeshBasicMaterial({color: 0xffff00, wireframe: true})
         );
     }
@@ -384,7 +482,6 @@ class Light{
 }
 
 Text.loadFont();
-mouseX = Wall.westWallPosX + 200;
 
 let northWall = new HorizontalWall();
 northWall.body.position.set(0, Wall.northWallPosY, 0);
@@ -438,7 +535,7 @@ let light = new Light();
 initThree();
 initCannon();
 
-let collision = 0;
+const deltaTime = 1 / 60;
 animate();
 
 function update() {
@@ -477,7 +574,6 @@ function initThree() {
     document.body.appendChild( renderer.domElement );
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.domElement.style.cursor = "none";
 
 
     //piano di sfondo
@@ -495,7 +591,8 @@ function initThree() {
     scene.add(score.mesh);
     scene.add(light.mesh);
 
-    //controls = new OrbitControls( camera, renderer.domElement );
+    stats = new Stats()
+    document.body.appendChild(stats.dom)
 
     window.onresize = update;
 }
@@ -504,8 +601,6 @@ function initCannon() {
     world = new CANNON.World({
         gravity: new CANNON.Vec3(0, 0, 0)
     });
-
-    //world.broadphase = new CANNON.SAPBroadphase(world);
 
     //ottimizzazioni per migliorare le collisioni
     world.quatNormalizeFast = false;
@@ -522,13 +617,13 @@ function initCannon() {
 
     //proprietà del contatto tra oggetti diversi:
     const wall_disc = new CANNON.ContactMaterial(Wall.bodyMaterial, disc.bodyMaterial, {
-        friction: 0,
+        friction: 1,
         restitution: 1
     });
 
     const player_disc = new CANNON.ContactMaterial(Player.bodyMaterial, disc.bodyMaterial, {
-        friction: 0,
-        restitution: 1
+        friction: 1,
+        restitution: 0
     });
 
     world.addContactMaterial(wall_disc);
@@ -544,41 +639,41 @@ function setScore() {
 trigger1.body.addEventListener('collide', function () {
     player2.addPoint(0.5);
     setScore();
-})
+});
 
 trigger2.body.addEventListener('collide', function () {
     player1.addPoint(0.5);
     setScore();
-})
+});
 
 renderer.domElement.onmousemove = function(event) {
-    mouseX = screenXToCartesian( event.x );
-    mouseY = screenYToCartesian( event.y );
+    mouseDeltaX = event.movementX;
+    mouseDeltaY = event.movementY;
 }
-
 
 function animate() {
     requestAnimationFrame( animate );
-
-    const deltaTime = 1 / 60;
 
     player1.move();
     player2.move();
 
     disc.outOfBounds();
-    disc.maxVelocity();
+
+    let numSteps = 300;
+    const subDeltaTime = deltaTime / numSteps;
+
+    for (let i = 0; i < numSteps; i++) {
+        disc.maxVelocity();
+
+        world.step(subDeltaTime);
+    }
 
     //scrive posizione e rotazione dei corpi di cannon.js sulle mesh di three.js
-    for (let i = 0; i !== meshes.length; i++) {
+    for (let i = 0; i !== bodies.length; i++) {
         meshes[i].position.copy(bodies[i].position);
         meshes[i].quaternion.copy(bodies[i].quaternion);
     }
 
-    let numSteps = 50; // Numero desiderato di passi di collisione
-    const subDeltaTime = deltaTime / numSteps;
-    for (let i = 0; i < numSteps; i++) {
-        world.step(subDeltaTime);
-    }
-
     renderer.render( scene, camera );
+    stats.update();
 }
