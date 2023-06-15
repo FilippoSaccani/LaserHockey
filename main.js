@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm';
-import {FontLoader} from 'three/addons/loaders/FontLoader.js';
-import {TextGeometry} from 'three/addons/geometries/TextGeometry.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
 import Stats from 'https://unpkg.com/three@0.122.0/examples/jsm/libs/stats.module.js'
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import {FilmPass} from "three/addons/postprocessing/FilmPass.js";
+import {UnrealBloomPass} from "three/addons/postprocessing/UnrealBloomPass.js";
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 
-let scene, renderer, camera, world, stats;
+let scene, renderer, camera, world, stats, composer, controls;
 let mouseDeltaX = 0;
 let mouseDeltaY = 0;
 
@@ -16,10 +21,11 @@ class Disc {
     radius = 30;
     bodyMaterial = new CANNON.Material();
     geometry = new THREE.CylinderGeometry(this.radius, this.radius, this.height);
-    material = new THREE.MeshStandardMaterial({color: 0xffff00});
+    material = new THREE.MeshPhysicalMaterial({color: 0xffff00});
     mesh;
     body;
-    maxVel = 800;
+    maxVel = 1500;
+    minVel = 10;
     #resetCounter = 0;
     #resetting = false;
 
@@ -43,21 +49,26 @@ class Disc {
     outOfBounds(){
         let t = this;
 
-        if (!this.resetting && (this.body.position.x < -window.innerWidth/2 || this.body.position.x > window.innerWidth/2 || this.body.position.y < -window.innerHeight/2 || this.body.position.y > window.innerHeight/2)) {
-            this.resetting = true;
+        if (!this.#resetting && (this.body.position.x < -window.innerWidth/2 || this.body.position.x > window.innerWidth/2 || this.body.position.y < -window.innerHeight/2 || this.body.position.y > window.innerHeight/2)) {
+            this.#resetting = true;
             setTimeout(function(){
-                t.resetting = false;
+                t.#resetting = false;
                 t.reset();
             }, 1000);
-            return true;
         }
+        return this.#resetting;
+    }
 
-        if (Math.abs(this.body.velocity.x) < 1 && Math.abs(this.body.velocity.y) < 1) {
-            this.resetCounter++;
-            if (this.resetCounter === 200) t.reset();
-            return true;
+    resetAfterStop() {
+        if (this.body.position.x === 0 && this.body.position.y === 0) return false;
+        else {
+            if (Math.abs(this.body.velocity.x) < this.minVel && Math.abs(this.body.velocity.y) < this.minVel) {
+                this.#resetCounter++;
+                if (this.#resetCounter === 200) this.reset();
+                return true;
+            }
+            this.#resetCounter = 0;
         }
-        this.resetCounter = 0;
 
         return false;
     }
@@ -69,16 +80,25 @@ class Disc {
 
     trajectoryToTrigger1(){
         let ray = this.trajectoryRay(window.innerWidth);
+        ray.mode = CANNON.Ray.CLOSEST;
 
-        let result = new CANNON.RaycastResult();
+        let result1 = new CANNON.RaycastResult();
+        let result2 = new CANNON.RaycastResult();
 
-        ray.intersectBody(trigger1.body, result);
+        ray.intersectBody(trigger1.body, result1);
 
-        if (result.hasHit) {
+        if (result1.hasHit) {
+            ray.intersectBody(northWestWall.body, result2)
+            if (result2.hasHit && result2.distance < result1.distance) return null;
+
+            ray.intersectBody(southWestWall.body, result2)
+            if (result2.hasHit && result2.distance < result1.distance) return null;
+
             let m, q;
 
             //coefficiente angolare di una retta passante per due punti
             m = Math.atan2(ray.direction.y, ray.direction.x);
+            m = Math.tan(m);
 
             q = this.body.position.y - this.body.position.x*m;
 
@@ -90,16 +110,25 @@ class Disc {
 
     trajectoryToTrigger2(){
         let ray = this.trajectoryRay(window.innerWidth);
+        ray.mode = CANNON.Ray.CLOSEST;
 
-        let result = new CANNON.RaycastResult();
+        let result1 = new CANNON.RaycastResult();
+        let result2 = new CANNON.RaycastResult();
 
-        ray.intersectBody(trigger2.body, result);
+        ray.intersectBody(trigger2.body, result1);
 
-        if (result.hasHit) {
+        if (result1.hasHit) {
+            ray.intersectBody(northEastWall.body, result2)
+            if (result2.hasHit && result2.distance < result1.distance) return null;
+
+            ray.intersectBody(southEastWall.body, result2)
+            if (result2.hasHit && result2.distance < result1.distance) return null;
+
             let m, q;
 
             //coefficiente angolare di una retta passante per due punti
             m = Math.atan2(ray.direction.y, ray.direction.x);
+            m = Math.tan(m);
 
             q = this.body.position.y - this.body.position.x*m;
 
@@ -136,6 +165,10 @@ class Player {
     body;
     points = 0;
     basePositionX;
+    defendSpeed = 20;
+    attackSpeed = 10;
+    returnSpeed = 30;
+    returning = 0;
 
     addPoint(amount){
         this.points += amount;
@@ -143,16 +176,19 @@ class Player {
 }
 
 class Player1 extends Player{
-    defendSpeed = 50;
-    attackSpeed = 20;
-    returnSpeed = 50;
-    returning = 0;
     constructor() {
         super();
         this.basePositionX = Wall.westWallPosX + 200;
 
         //three
         this.material = new THREE.MeshStandardMaterial({color: 0xff0000});
+
+        let map = new THREE.TextureLoader().load("texture/FOTO TEAM marco.png");
+        map.center = new THREE.Vector2(0.5, 0.5);
+        map.anisotropy = 4;
+        map.rotation = Math.PI/2;
+
+        //this.material = new THREE.MeshBasicMaterial({map: map});
         this.mesh = new THREE.Mesh( this.geometry, this.material );
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
@@ -190,9 +226,14 @@ class Player1 extends Player{
     }
      */
 
-    /*
     limits(){
         let angleLimit = 1.06;
+
+        if (this.body.position.x >= -this.radius) this.body.position.x = -this.radius;
+        if (this.body.position.x <= Wall.westWallPosX + this.radius + 5 + disc.radius*angleLimit) this.body.position.x = Wall.westWallPosX + this.radius + 5 + disc.radius*angleLimit;
+
+        if (this.body.position.y >= Wall.northWallPosY - this.radius - 5 - disc.radius*angleLimit) this.body.position.y = Wall.northWallPosY - this.radius - 5 - disc.radius*angleLimit;
+        if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5 + disc.radius*angleLimit) this.body.position.y = Wall.southWallPosY + this.radius + 5 + disc.radius*angleLimit;
     }
 
     move(){
@@ -206,7 +247,7 @@ class Player1 extends Player{
 
             //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore due allora non attacca,
             // ma torna verso la sua posizione iniziale
-            if (disc.body.position.x > 0 || disc.body.velocity.x > 300 || this.returning > 0) this.return();
+            if (disc.body.position.x > 0 || disc.body.velocity.x > 400 || this.returning > 0 || disc.outOfBounds() || disc.resetAfterStop()) this.return();
 
             //altrimenti attacca
             else this.attack();
@@ -236,8 +277,8 @@ class Player1 extends Player{
     }
 
     attack(){
-        this.body.position.x += (disc.body.position.x - this.body.position.x - disc.radius)/(this.attackSpeed);
-        this.body.position.y += (disc.body.position.y - this.body.position.y - disc.radius)/(this.attackSpeed);
+        this.body.position.x += (disc.body.position.x - this.body.position.x)/(this.attackSpeed);
+        this.body.position.y += (disc.body.position.y - this.body.position.y)/(this.attackSpeed);
     }
 
     return(){
@@ -245,22 +286,22 @@ class Player1 extends Player{
         this.body.position.x += (this.basePositionX - this.body.position.x)/this.returnSpeed;
         this.body.position.y += (-this.body.position.y)/this.returnSpeed;
     }
-
-     */
 }
 
 class Player2 extends Player {
-    defendSpeed = 50;
-    attackSpeed = 20;
-    returnSpeed = 50;
-    returning = 0;
-
     constructor() {
         super();
         this.basePositionX = Wall.eastWallPosX - 200;
 
         //three
         this.material = new THREE.MeshStandardMaterial({color: 0x0000ff});
+
+        let map = new THREE.TextureLoader().load("texture/FOTO TEAM vacco.png");
+        map.center = new THREE.Vector2(0.5, 0.5);
+        map.rotation = Math.PI/2;
+        map.anisotropy = 4;
+
+        //this.material = new THREE.MeshBasicMaterial({map: map});
         this.mesh = new THREE.Mesh( this.geometry, this.material );
         this.mesh.castShadow = true;
 
@@ -287,7 +328,7 @@ class Player2 extends Player {
 
             //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore uno allora non attacca,
             // ma torna verso la sua posizione iniziale
-            if (disc.body.position.x < 0 || disc.body.velocity.x < - 300 || this.returning > 0) this.return();
+            if (disc.body.position.x < 0 || disc.body.velocity.x < - 400 || this.returning > 0 || disc.outOfBounds() || disc.resetAfterStop()) this.return();
 
             //altrimenti attacca
             else this.attack();
@@ -328,8 +369,8 @@ class Player2 extends Player {
     }
 
     attack(){
-        this.body.position.x += (disc.body.position.x - this.body.position.x - disc.radius)/(this.attackSpeed);
-        this.body.position.y += (disc.body.position.y - this.body.position.y - disc.radius)/(this.attackSpeed);
+        this.body.position.x += (disc.body.position.x - this.body.position.x)/(this.attackSpeed);
+        this.body.position.y += (disc.body.position.y - this.body.position.y)/(this.attackSpeed);
     }
 
     return(){
@@ -340,7 +381,7 @@ class Player2 extends Player {
 }
 
 class Wall {
-    material = new THREE.MeshStandardMaterial({color: 0x111100});
+    material = new THREE.MeshPhysicalMaterial({color: 0x00ffff});
     static deltaFromHorizontalBorder = 200;
     static deltaFromVerticalBorder = 100;
     width;
@@ -425,13 +466,14 @@ class Trigger {
 
 class Text {
     materials = [
-        new THREE.MeshBasicMaterial({color: 0xffffff}), // front
-        new THREE.MeshBasicMaterial({color: 0xa0a0a0}), // side
+        new THREE.MeshPhysicalMaterial({color: 0xffffff}), // front
+        new THREE.MeshPhysicalMaterial({color: 0xa0a0a0}), // side
     ]
     mesh;
     size = 50;
     depth = 20;
     static font;
+
     constructor(text) {
         this.mesh = new THREE.Mesh(
             new TextGeometry( text, {
@@ -452,7 +494,9 @@ class Text {
         geo.computeBoundingBox();
         let offset = - 0.5 * ( geo.boundingBox.max.x - geo.boundingBox.min.x);
 
-        this.mesh.position.set(offset, window.innerHeight/2 - this.size - 20, 0);
+        this.mesh.position.set(offset, Wall.northWallPosY, 0);
+        this.mesh.castShadow = true;
+        this.mesh.receiveShadow = true;
     }
 
     static loadFont() {
@@ -466,52 +510,87 @@ class Text {
 
 class Light{
     mesh
+
     constructor() {
-        this.mesh = new THREE.PointLight(0xffffff, 100, 1000);
+        this.mesh = new THREE.AmbientLight(0xffffff, 8);
+    }
+}
 
-        this.mesh.castShadow = true;
+class BorderAngle extends THREE.Curve {
+    static radius = 10;
+    position = new THREE.Vector3;
 
-        this.mesh.shadow.mapSize.width = 2048;
-        this.mesh.shadow.mapSize.height = 2048;
-        this.mesh.shadow.camera.near = 0.5;
-        this.mesh.shadow.camera.far = 1000;
-        this.mesh.shadow.bias = 0.0000001;
+    constructor( scale = 1, position = new THREE.Vector3(0, 0, 0)) {
+        super();
+        this.scale = scale;
+        this.position = position.clone();
+    }
 
-        this.mesh.position.set(0, 0, 150);
+    getPoint(t, optionalTarget = new THREE.Vector3()) {
+        const tx = BorderAngle.radius * t
+        const ty = Math.sqrt(BorderAngle.radius**2 - tx**2);            //errore con il posizionamento: a volte viene l'argomento negativo e si fotte
+        const tz = 0;
+
+        console.log(optionalTarget.set( tx, ty, tz ).multiplyScalar(this.scale));
+
+        return optionalTarget.set( tx, ty, tz ).multiplyScalar(this.scale);
+    }
+}
+
+class Border {
+    mesh;
+    radius = 10;
+
+    constructor() {
+        let borderCurvePath = new THREE.CurvePath();
+
+        let tlCurve = new BorderAngle(10, new THREE.Vector3(Wall.westWallPosX, Wall.northWallPosY, 0));
+        borderCurvePath.add(tlCurve);
+
+        //let topCurve = new THREE.LineCurve3(new THREE.Vector3(Wall.westWallPosX + BorderAngle.radius, Wall.northWallPosY, 0), new THREE.Vector3(-100, Wall.northWallPosY, 0));
+        //borderCurvePath.add(topCurve);
+
+
+        let tlGeometry = new THREE.TubeGeometry(borderCurvePath, 100, this.radius, 100);
+        let tlMaterial = new THREE.MeshPhysicalMaterial({color: 0xff0000});
+
+        this.mesh = new THREE.Mesh( tlGeometry, tlMaterial );
     }
 }
 
 Text.loadFont();
 
+let border = new Border();
+
 let northWall = new HorizontalWall();
 northWall.body.position.set(0, Wall.northWallPosY, 0);
-meshes.push(northWall.mesh);
-bodies.push(northWall.body);
+// meshes.push(northWall.mesh);
+// bodies.push(northWall.body);
 
 let northEastWall = new VerticalWall();
 northEastWall.body.position.set(Wall.eastWallPosX, northEastWall.height, 0);
-meshes.push(northEastWall.mesh);
-bodies.push(northEastWall.body);
+// meshes.push(northEastWall.mesh);
+// bodies.push(northEastWall.body);
 
 let southEastWall = new VerticalWall();
 southEastWall.body.position.set(Wall.eastWallPosX, -northEastWall.height, 0);
-meshes.push(southEastWall.mesh);
-bodies.push(southEastWall.body);
+// meshes.push(southEastWall.mesh);
+// bodies.push(southEastWall.body);
 
 let southWall = new HorizontalWall();
 southWall.body.position.set(0, Wall.southWallPosY, 0);
-meshes.push(southWall.mesh);
-bodies.push(southWall.body);
+// meshes.push(southWall.mesh);
+// bodies.push(southWall.body);
 
 let southWestWall = new VerticalWall();
 southWestWall.body.position.set(Wall.westWallPosX, -southWestWall.height, 0);
-meshes.push(southWestWall.mesh);
-bodies.push(southWestWall.body);
+// meshes.push(southWestWall.mesh);
+// bodies.push(southWestWall.body);
 
 let northWestWall = new VerticalWall();
 northWestWall.body.position.set(Wall.westWallPosX, southWestWall.height, 0);
-meshes.push(northWestWall.mesh);
-bodies.push(northWestWall.body);
+// meshes.push(northWestWall.mesh);
+// bodies.push(northWestWall.body);
 
 let trigger1 = new Trigger(northWestWall);
 
@@ -562,10 +641,10 @@ function initThree() {
 
     //telecamera
     camera = new THREE.OrthographicCamera(-window.innerWidth/2, window.innerWidth/2, window.innerHeight/2, -window.innerHeight/2);
-    camera.position.set(0, 0, 200);
+    camera.position.set(0, 0, 1000);
     camera.lookAt(0, 0, 0);
     camera.near = 0;
-    camera.far = 300;
+    camera.far = 3000;
 
 
     //renderizzatore
@@ -575,10 +654,20 @@ function initThree() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    composer = new EffectComposer( renderer );
+
+    const renderPass = new RenderPass( scene, camera );
+    composer.addPass( renderPass );
+
+    const filmPass = new FilmPass(0.8, 0.05, 1000, 0);
+    composer.addPass( filmPass );
+
+    const bloomPass = new UnrealBloomPass(1000, 0.2);
+    composer.addPass( bloomPass );
 
     //piano di sfondo
     const planeGeometry = new THREE.PlaneGeometry(window.innerWidth, window.innerHeight);
-    const planeMaterial = new THREE.MeshStandardMaterial({color: 0x000000});
+    const planeMaterial = new THREE.MeshPhysicalMaterial({color: 0x000000});
     const plane = new THREE.Mesh( planeGeometry, planeMaterial );
     plane.receiveShadow = true;
     scene.add(plane);
@@ -590,9 +679,12 @@ function initThree() {
 
     scene.add(score.mesh);
     scene.add(light.mesh);
+    scene.add(border.mesh)
 
     stats = new Stats()
     document.body.appendChild(stats.dom)
+
+    controls = new OrbitControls( camera, renderer.domElement );
 
     window.onresize = update;
 }
@@ -618,7 +710,7 @@ function initCannon() {
     //proprietà del contatto tra oggetti diversi:
     const wall_disc = new CANNON.ContactMaterial(Wall.bodyMaterial, disc.bodyMaterial, {
         friction: 1,
-        restitution: 1
+        restitution: 1.2
     });
 
     const player_disc = new CANNON.ContactMaterial(Player.bodyMaterial, disc.bodyMaterial, {
@@ -634,6 +726,7 @@ function setScore() {
     scene.remove(score.mesh);
     score = new Text(player1.points + " - " + player2.points);
     scene.add(score.mesh);
+
 }
 
 trigger1.body.addEventListener('collide', function () {
@@ -651,6 +744,12 @@ renderer.domElement.onmousemove = function(event) {
     mouseDeltaY = event.movementY;
 }
 
+renderer.domElement.onclick = function(event) {
+    //renderer.domElement.requestPointerLock();
+}
+
+console.clear();
+
 function animate() {
     requestAnimationFrame( animate );
 
@@ -658,8 +757,9 @@ function animate() {
     player2.move();
 
     disc.outOfBounds();
+    disc.resetAfterStop();
 
-    let numSteps = 300;
+    let numSteps = 10;
     const subDeltaTime = deltaTime / numSteps;
 
     for (let i = 0; i < numSteps; i++) {
@@ -674,6 +774,7 @@ function animate() {
         meshes[i].quaternion.copy(bodies[i].quaternion);
     }
 
-    renderer.render( scene, camera );
+    composer.render();
     stats.update();
+    controls.update();
 }
