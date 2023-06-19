@@ -7,7 +7,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import {FilmPass} from "three/addons/postprocessing/FilmPass.js";
 import {UnrealBloomPass} from "three/addons/postprocessing/UnrealBloomPass.js";
-import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 
 let scene, renderer, camera, world, stats, composer, controls;
 
@@ -20,6 +19,10 @@ let bodies = [];
 const deltaTime = 1 / 60;
 const numSteps = 30;
 
+let domE = document.getElementById("canvas-placeholder");
+let width = domE.offsetWidth;
+let height = width * 9/16;
+
 class Disc {
     height = 19;
     radius = 30;
@@ -28,7 +31,7 @@ class Disc {
     material = new THREE.MeshPhysicalMaterial({color: 0xffff00});
     mesh;
     body;
-    maxVel = 1500;
+    maxVel = 1100;
     minVel = 5;
     #resetCounter = 0;
     #resetting = false;
@@ -36,8 +39,6 @@ class Disc {
 
     constructor() {
         this.mesh = new THREE.Mesh( this.geometry, this.material );
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
 
         this.body = new CANNON.Body({
             mass: 2,
@@ -186,12 +187,13 @@ class Player {
 }
 
 class Player1 extends Player{
+    invSensitivity = 2;
     constructor() {
         super();
         this.basePositionX = Wall.westWallPosX + 200;
 
         //three
-        this.material = new THREE.MeshStandardMaterial({color: 0xff6000});
+        this.material = new THREE.MeshStandardMaterial({color: 0xff3000});
 
         let map = new THREE.TextureLoader().load("texture/FOTO TEAM marco.png");
         map.center = new THREE.Vector2(0.5, 0.5);
@@ -200,8 +202,6 @@ class Player1 extends Player{
 
         //this.material = new THREE.MeshBasicMaterial({map: map});
         this.mesh = new THREE.Mesh( this.geometry, this.material );
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
 
         //cannon
         this.body = new CANNON.Body({
@@ -215,17 +215,17 @@ class Player1 extends Player{
         this.body.quaternion.setFromEuler(Math.PI/2, 0, 0);
     }
 
-    /*
+
     move(){
-        this.body.position.x += mouseDeltaX/2;
-        this.body.position.y += -mouseDeltaY/2;
+        this.body.position.x += mouseDeltaX * 2.3 * (disc.body.position.distanceTo(this.body.position) / (window.innerWidth));
+        this.body.position.y += -mouseDeltaY * 2.3 * (disc.body.position.distanceTo(this.body.position) / (window.innerHeight));
 
         mouseDeltaX = 0;
         mouseDeltaY = 0;
 
         this.limits();
     }
-
+    /*
     limits(){
         //controllo dei bordi
         if (this.body.position.x >= -this.radius) this.body.position.x = -this.radius;
@@ -234,68 +234,72 @@ class Player1 extends Player{
         if (this.body.position.y >= Wall.northWallPosY - this.radius - 5 - disc.radius/2) this.body.position.y = Wall.northWallPosY - this.radius - 5 - disc.radius/2;
         if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5 + disc.radius/2) this.body.position.y = Wall.southWallPosY + this.radius + 5 + disc.radius/2;
     }
+
      */
+
 
     limits(){
         if (this.body.position.x >= -this.radius) this.body.position.x = -this.radius;
-        if (this.body.position.x <= Wall.westWallPosX + this.radius + 5 + disc.radius*this.angleLimit) this.body.position.x = Wall.westWallPosX + this.radius + 5 + disc.radius*this.angleLimit;
+        if (this.body.position.x <= Wall.westWallPosX + this.radius + 5 + disc.radius) this.body.position.x = Wall.westWallPosX + this.radius + 5 + disc.radius;
 
-        if (this.body.position.y >= Wall.northWallPosY - this.radius - 5 - disc.radius*this.angleLimit) this.body.position.y = Wall.northWallPosY - this.radius - 5 - disc.radius*this.angleLimit;
-        if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5 + disc.radius*this.angleLimit) this.body.position.y = Wall.southWallPosY + this.radius + 5 + disc.radius*this.angleLimit;
+        if (this.body.position.y >= Wall.northWallPosY - this.radius - 5 - disc.radius) this.body.position.y = Wall.northWallPosY - this.radius - 5 - disc.radius;
+        if ( this.body.position.y <= Wall.southWallPosY + this.radius + 5 + disc.radius) this.body.position.y = Wall.southWallPosY + this.radius + 5 + disc.radius;
     }
+    /*
+        move(){
+            let trajectory = disc.trajectoryToTrigger1();
 
-    move(){
-        let trajectory = disc.trajectoryToTrigger1();
+            //difesa
+            if (trajectory && disc.body.velocity.x < - 400) this.defend(trajectory);
+            else {
+                //limita i loop di attacco/ritorno negli angoli
+                if (this.returning > 20) this.returning = 0;
 
-        //difesa
-        if (trajectory && disc.body.velocity.x < - 400) this.defend(trajectory);
-        else {
-            //limita i loop di attacco/ritorno negli angoli
-            if (this.returning > 20) this.returning = 0;
+                //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore due allora non attacca,
+                // ma torna verso la sua posizione iniziale
+                if (disc.body.position.x > 0 || disc.body.velocity.x > 400 || this.returning > 0 || disc.outOfBounds() || disc.resetAfterStop() || (disc.body.velocity.x > 100 && disc.body.position.x > -200)) {
+                    this.return();
+                }
 
-            //se il disco si trova dalla parte del giocatore uno, fuori dal campo o sta andando verso il giocatore due allora non attacca,
-            // ma torna verso la sua posizione iniziale
-            if (disc.body.position.x > 0 || disc.body.velocity.x > 400 || this.returning > 0 || disc.outOfBounds() || disc.resetAfterStop() || (disc.body.velocity.x > 100 && disc.body.position.x > -200)) {
-                this.return();
+                //altrimenti attacca
+                else this.attack();
             }
 
-            //altrimenti attacca
-            else this.attack();
+            this.limits();
         }
 
-        this.limits();
-    }
+        defend(trajectory){
+            let intersectionX, intersectionY;
 
-    defend(trajectory){
-        let intersectionX, intersectionY;
+            //punto della linea più vicino al giocatore
+            if (trajectory.x === 0) {
+                intersectionX = this.body.position.x;
+                intersectionY = trajectory.y;
+            }
+            else {
+                let m2 = -1/trajectory.x;
+                let q2 = this.body.position.y - this.body.position.x*m2;
 
-        //punto della linea più vicino al giocatore
-        if (trajectory.x === 0) {
-            intersectionX = this.body.position.x;
-            intersectionY = trajectory.y;
+                intersectionX = (q2 - trajectory.y)/(trajectory.x - m2);
+                intersectionY = m2 * intersectionX + q2;
+            }
+
+            this.body.position.x += (intersectionX - this.body.position.x)/this.defendSpeed - 10;
+            this.body.position.y += (intersectionY - this.body.position.y)/this.defendSpeed;
         }
-        else {
-            let m2 = -1/trajectory.x;
-            let q2 = this.body.position.y - this.body.position.x*m2;
 
-            intersectionX = (q2 - trajectory.y)/(trajectory.x - m2);
-            intersectionY = m2 * intersectionX + q2;
+        attack(){
+            this.body.position.x += (disc.body.position.x - this.body.position.x)/(this.attackSpeed);
+            this.body.position.y += (disc.body.position.y - this.body.position.y)/(this.attackSpeed);
         }
 
-        this.body.position.x += (intersectionX - this.body.position.x)/this.defendSpeed - 10;
-        this.body.position.y += (intersectionY - this.body.position.y)/this.defendSpeed;
-    }
+        return(){
+            this.returning++;
+            this.body.position.x += (this.basePositionX - this.body.position.x)/this.returnSpeed;
+            this.body.position.y += (-this.body.position.y)/this.returnSpeed;
+        }
 
-    attack(){
-        this.body.position.x += (disc.body.position.x - this.body.position.x)/(this.attackSpeed);
-        this.body.position.y += (disc.body.position.y - this.body.position.y)/(this.attackSpeed);
-    }
-
-    return(){
-        this.returning++;
-        this.body.position.x += (this.basePositionX - this.body.position.x)/this.returnSpeed;
-        this.body.position.y += (-this.body.position.y)/this.returnSpeed;
-    }
+         */
 }
 
 class Player2 extends Player {
@@ -313,7 +317,6 @@ class Player2 extends Player {
 
         //this.material = new THREE.MeshBasicMaterial({map: map});
         this.mesh = new THREE.Mesh( this.geometry, this.material );
-        this.mesh.castShadow = true;
 
         //cannon
         this.body = new CANNON.Body({
@@ -410,7 +413,7 @@ class WallAngle extends Wall{
         super();
 
         this.body = new CANNON.Body({
-            shape: CANNON.Trimesh.createTorus(WallAngle.angleRadius, Wall.radius, 16, 48, Math.PI/2),
+            shape: CANNON.Trimesh.createTorus(WallAngle.angleRadius, Wall.radius, 10, 16, Math.PI/2),
             type: CANNON.Body.STATIC,
             material: Wall.bodyMaterial,
             position: position,
@@ -509,8 +512,6 @@ class Text {
         let offset = - 0.5 * ( geo.boundingBox.max.x - geo.boundingBox.min.x);
 
         this.mesh.position.set(offset, Wall.northWallPosY - this.size/2, 0);
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
     }
 
     static loadFont() {
@@ -606,6 +607,10 @@ let bottomHorizontalWallLength = window.innerWidth/2 - 2*Wall.deltaFromVerticalB
 let verticalWallLength = window.innerHeight/2 - Wall.deltaFromVerticalBorder - WallAngle.angleRadius - goalSize/2;
 let scoreWallLength = 7*Wall.deltaFromVerticalBorder;
 
+let centerRings = new CenterRings(goalSize/1.5);
+let rightGoalRings = new GoalRings(Wall.eastWallPosX, goalSize/2);
+let leftGoalRings = new GoalRings(Wall.westWallPosX, goalSize/2);
+
 //muri sopra
 let ltLine = new WallLine(0xff0000, new CANNON.Vec3(Wall.westWallPosX, Wall.northWallPosY, 0), new CANNON.Vec3(0, 0, 0), verticalWallLength);
 meshes.push(ltLine.mesh);
@@ -668,17 +673,13 @@ let lbGoalLine = new WallLine(0x00ffff, new CANNON.Vec3(-window.innerWidth/2 - s
 meshes.push(lbGoalLine.mesh);
 bodies.push(lbGoalLine.body);
 
-let rtGoalLine = new WallLine(0xff6000, new CANNON.Vec3(window.innerWidth/2 + scoreWallLength, goalSize/2 + Wall.radius, 0), new CANNON.Vec3(0, 0, Math.PI/2), scoreWallLength)
+let rtGoalLine = new WallLine(0xff3000, new CANNON.Vec3(window.innerWidth/2 + scoreWallLength, goalSize/2 + Wall.radius, 0), new CANNON.Vec3(0, 0, Math.PI/2), scoreWallLength)
 meshes.push(rtGoalLine.mesh);
 bodies.push(rtGoalLine.body);
 
-let rbGoalLine = new WallLine(0xff6000, new CANNON.Vec3(window.innerWidth/2 + scoreWallLength, -goalSize/2 - Wall.radius, 0), new CANNON.Vec3(0, 0, Math.PI/2), scoreWallLength)
+let rbGoalLine = new WallLine(0xff3000, new CANNON.Vec3(window.innerWidth/2 + scoreWallLength, -goalSize/2 - Wall.radius, 0), new CANNON.Vec3(0, 0, Math.PI/2), scoreWallLength)
 meshes.push(rbGoalLine.mesh);
 bodies.push(rbGoalLine.body);
-
-let centerRings = new CenterRings(goalSize/1.5);
-let rightGoalRings = new GoalRings(Wall.eastWallPosX, goalSize/2);
-let leftGoalRings = new GoalRings(Wall.westWallPosX, goalSize/2);
 
 let trigger1 = new Trigger(new CANNON.Vec3(Wall.westWallPosX, 0, 0));
 
@@ -718,35 +719,33 @@ function initThree() {
 
     //telecamera
     camera = new THREE.OrthographicCamera(-window.innerWidth/2, window.innerWidth/2, window.innerHeight/2, -window.innerHeight/2);
-    camera.position.set(0, 0, 1000);
+    camera.position.set(0, 0, 100);
     camera.lookAt(0, 0, 0);
     camera.near = 0;
-    camera.far = 3000;
+    camera.far = 200;
 
 
     //renderizzatore
     renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild( renderer.domElement );
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = false;
 
     composer = new EffectComposer( renderer );
 
     const renderPass = new RenderPass( scene, camera );
     composer.addPass( renderPass );
 
-    const filmPass = new FilmPass(0.8, 0.05, 1000, 0);
-    composer.addPass( filmPass );
-
     const bloomPass = new UnrealBloomPass(1000, 0.2);
     composer.addPass( bloomPass );
+
+    const filmPass = new FilmPass(0.8, 0.1, 1000, 0);
+    composer.addPass( filmPass );
 
     //piano di sfondo
     const planeGeometry = new THREE.PlaneGeometry(window.innerWidth, window.innerHeight);
     const planeMaterial = new THREE.MeshPhysicalMaterial({color: 0x000000});
     const plane = new THREE.Mesh( planeGeometry, planeMaterial );
-    plane.receiveShadow = true;
     scene.add(plane);
 
     //aggiunge tutte le mesh create in precedenza
@@ -764,7 +763,7 @@ function initThree() {
     stats = new Stats()
     document.body.appendChild(stats.dom)
 
-    controls = new OrbitControls( camera, renderer.domElement );
+    //controls = new OrbitControls( camera, renderer.domElement );
 
     window.onresize = update;
 }
@@ -777,7 +776,6 @@ function initCannon() {
     //ottimizzazioni per migliorare le collisioni
     world.quatNormalizeFast = false;
     world.quatNormalizeSkip = 0;
-
 
 
     world.addBody(trigger1.body);
@@ -838,14 +836,12 @@ renderer.domElement.onmousemove = function(event) {
     mouseDeltaY = event.movementY;
 }
 
-renderer.domElement.onclick = function(event) {
-    //renderer.domElement.requestPointerLock();
+renderer.domElement.onclick = function() {
+    renderer.domElement.requestPointerLock();
 }
 
 function animate() {
-    setTimeout(function () {
-        requestAnimationFrame( animate );
-    }, 1000/100);
+    requestAnimationFrame( animate );
 
     player1.move();
     player2.move();
@@ -869,5 +865,5 @@ function animate() {
 
     composer.render();
     stats.update();
-    controls.update();
+    //controls.update();
 }
