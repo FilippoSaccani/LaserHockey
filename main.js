@@ -19,9 +19,9 @@ let bodies = [];
 const deltaTime = 1 / 60;
 const numSteps = 30;
 
-let domE = document.getElementById("canvas-placeholder");
-let width = domE.offsetWidth;
-let height = width * 9/16;
+//let domE = document.getElementById("canvas-placeholder");
+//let width = domE.offsetWidth;
+//let height = width * 9/16;
 
 class Disc {
     height = 19;
