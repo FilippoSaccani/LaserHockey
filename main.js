@@ -217,8 +217,8 @@ class Player1 extends Player{
 
 
     move(){
-        this.body.position.x += mouseDeltaX * 2.3 * (disc.body.position.distanceTo(this.body.position) / (window.innerWidth));
-        this.body.position.y += -mouseDeltaY * 2.3 * (disc.body.position.distanceTo(this.body.position) / (window.innerHeight));
+        this.body.position.x += mouseDeltaX * 2.6 * (disc.body.position.distanceTo(this.body.position) / (window.innerWidth));
+        this.body.position.y += -mouseDeltaY * 2.6 * (disc.body.position.distanceTo(this.body.position) / (window.innerHeight));
 
         mouseDeltaX = 0;
         mouseDeltaY = 0;
@@ -517,7 +517,7 @@ class Text {
     static loadFont() {
         const fontLoader = new FontLoader();
 
-        fontLoader.load("node_modules/three/examples/fonts/helvetiker_bold.typeface.json", function ( response ){
+        fontLoader.load("https://unpkg.com/three@0.153.0/examples/fonts/helvetiker_regular.typeface.json", function ( response ){
             Text.font = response;
             setScore(false);
         })
@@ -836,8 +836,10 @@ renderer.domElement.onmousemove = function(event) {
     mouseDeltaY = event.movementY;
 }
 
-renderer.domElement.onclick = function() {
-    renderer.domElement.requestPointerLock();
+renderer.domElement.onclick =  () => {
+    renderer.domElement.requestPointerLock({
+        unadjustedMovement: true
+    });
 }
 
 function animate() {
