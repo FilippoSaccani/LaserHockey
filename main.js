@@ -137,8 +137,9 @@ class Disc {
             let m, q;
 
             //coefficiente angolare di una retta passante per due punti
-            m = Math.atan2(ray.direction.y, ray.direction.x);
-            m = Math.tan(m);
+            m = ray.direction.y/ray.direction.x;
+
+            console.log(m);
 
             q = this.body.position.y - this.body.position.x*m;
 
