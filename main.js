@@ -737,7 +737,7 @@ function initThree() {
     const renderPass = new RenderPass( scene, camera );
     composer.addPass( renderPass );
 
-    const bloomPass = new UnrealBloomPass(1000, 0.2);
+    const bloomPass = new UnrealBloomPass(1000, 0.4);
     composer.addPass( bloomPass );
 
     const filmPass = new FilmPass(0.8, 0.1, 1000, 0);
